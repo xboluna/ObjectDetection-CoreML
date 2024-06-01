@@ -28,13 +28,13 @@ class ViewController: UIViewController {
     // yolov5n(iOS13+), yolov5s(iOS13+), yolov5m(iOS13+), yolov5l(iOS13+), yolov5x(iOS13+)
     // yolov5n6(iOS13+), yolov5s6(iOS13+), yolov5m6(iOS13+), yolov5l6(iOS13+), yolov5x6(iOS13+)
     // yolov8n(iOS14+), yolov8s(iOS14+), yolov8m(iOS14+), yolov8l(iOS14+), yolov8x(iOS14+)
-    lazy var objectDectectionModel = { return try? yolov8s() }()
+    lazy var objectDetectionModel = { return try? yolov8s() }()
     
     // MARK: - Vision Properties
     var request: VNCoreMLRequest?
     var visionModel: VNCoreMLModel?
     var isInferencing = false
-    
+
     // MARK: - AV Property
     var videoCapture: VideoCapture!
     let semaphore = DispatchSemaphore(value: 1)
@@ -80,8 +80,8 @@ class ViewController: UIViewController {
     
     // MARK: - Setup Core ML
     func setUpModel() {
-        guard let objectDectectionModel = objectDectectionModel else { fatalError("fail to load the model") }
-        if let visionModel = try? VNCoreMLModel(for: objectDectectionModel.model) {
+        guard let objectDetectionModel = objectDetectionModel else { fatalError("fail to load the model") }
+        if let visionModel = try? VNCoreMLModel(for: objectDetectionModel.model) {
             self.visionModel = visionModel
             request = VNCoreMLRequest(model: visionModel, completionHandler: visionRequestDidComplete)
             request?.imageCropAndScaleOption = .scaleFill
@@ -149,8 +149,8 @@ extension ViewController {
     func visionRequestDidComplete(request: VNRequest, error: Error?) {
         self.👨‍🔧.🏷(with: "endInference")
         if let predictions = request.results as? [VNRecognizedObjectObservation] {
-//            print(predictions.first?.labels.first?.identifier ?? "nil")
-//            print(predictions.first?.labels.first?.confidence ?? -1)
+            print(predictions.first?.labels.first?.identifier ?? "nil")
+            print(predictions.first?.labels.first?.confidence ?? -1)
             
             self.predictions = predictions
             DispatchQueue.main.async {

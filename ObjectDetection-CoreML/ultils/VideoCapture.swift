@@ -81,8 +81,10 @@ public class VideoCapture: NSObject {
     }
     
     public func start() {
-        if !captureSession.isRunning {
-            captureSession.startRunning()
+        DispatchQueue.global(qos: .background).async {
+            if !self.captureSession.isRunning {
+                self.captureSession.startRunning()
+            }
         }
     }
     
