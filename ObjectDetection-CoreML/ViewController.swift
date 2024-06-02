@@ -34,6 +34,10 @@ class ViewController: UIViewController {
     var request: VNCoreMLRequest?
     var visionModel: VNCoreMLModel?
     var isInferencing = false
+    
+    // MARK: - Tracking Properties
+    var trackedObjects = [UUID: VNDetectedObjectObservation]()
+    var sequenceRequestHandler = VNSequenceRequestHandler()
 
     // MARK: - AV Property
     var videoCapture: VideoCapture!
@@ -129,9 +133,53 @@ extension ViewController: VideoCaptureDelegate {
             
             // start of measure
             self.👨‍🔧.🎬👏()
+
+            // if we have tracked objects, update their locations
+            if !trackedObjects.isEmpty {
+                self.trackObjects(pixelBuffer: pixelBuffer)
+            } else {
+                // otherwise, perform initial detection
+                self.predictUsingVision(pixelBuffer: pixelBuffer)
+            }            
+        }
+    }
+}
+
+extension ViewController {
+    func trackObjects(pixelBuffer: CVPixelBuffer) {
+        var trackingRequests = [VNRequest]()
+        
+        for (_, observation) in trackedObjects {
+            let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: observation)
+            trackingRequests.append(trackingRequest)
+        }
+        
+        do {
+            try sequenceRequestHandler.perform(trackingRequests, on: pixelBuffer)
             
-            // predict!
-            self.predictUsingVision(pixelBuffer: pixelBuffer)
+            var newTrackedObjects = [UUID: VNDetectedObjectObservation]()
+            var newPredictions = [VNRecognizedObjectObservation]()
+            
+            for request in trackingRequests {
+                if let results = request.results as? [VNRecognizedObjectObservation], let result = results.first {
+                    newTrackedObjects[result.uuid] = result
+                    newPredictions.append(result)
+                }
+            }
+            
+            self.predictions = newPredictions
+            self.trackedObjects = newTrackedObjects
+            
+            DispatchQueue.main.async {
+                self.boxesView.predictedObjects = self.predictions
+                self.labelsTableView.reloadData()
+
+                self.👨‍🔧.🎬🤚()
+                self.isInferencing = false
+            }
+        } catch {
+            self.👨‍🔧.🎬🤚()
+            self.isInferencing = false
         }
     }
 }
@@ -149,10 +197,14 @@ extension ViewController {
     func visionRequestDidComplete(request: VNRequest, error: Error?) {
         self.👨‍🔧.🏷(with: "endInference")
         if let predictions = request.results as? [VNRecognizedObjectObservation] {
-            print(predictions.first?.labels.first?.identifier ?? "nil")
-            print(predictions.first?.labels.first?.confidence ?? -1)
+            // print(predictions.first?.labels.first?.identifier ?? "nil")
+            // print(predictions.first?.labels.first?.confidence ?? -1)
             
-            self.predictions = predictions
+            for prediction in predictions {
+                let observation = VNDetectedObjectObservation(boundingBox: prediction.boundingBox)
+                self.trackedObjects[observation.uuid] = observation
+            }
+
             DispatchQueue.main.async {
                 self.boxesView.predictedObjects = predictions
                 self.labelsTableView.reloadData()
