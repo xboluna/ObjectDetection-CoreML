@@ -134,58 +134,13 @@ extension ViewController: VideoCaptureDelegate {
             // start of measure
             self.👨‍🔧.🎬👏()
 
-            // if we have tracked objects, update their locations
-            if !trackedObjects.isEmpty {
-                self.trackObjects(pixelBuffer: pixelBuffer)
-            } else {
-                // otherwise, perform initial detection
-                self.predictUsingVision(pixelBuffer: pixelBuffer)
-            }            
+            self.predictAndTrack(pixelBuffer: pixelBuffer)
         }
     }
 }
 
 extension ViewController {
-    func trackObjects(pixelBuffer: CVPixelBuffer) {
-        var trackingRequests = [VNRequest]()
-        
-        for (_, observation) in trackedObjects {
-            let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: observation)
-            trackingRequests.append(trackingRequest)
-        }
-        
-        do {
-            try sequenceRequestHandler.perform(trackingRequests, on: pixelBuffer)
-            
-            var newTrackedObjects = [UUID: VNDetectedObjectObservation]()
-            var newPredictions = [VNRecognizedObjectObservation]()
-            
-            for request in trackingRequests {
-                if let results = request.results as? [VNRecognizedObjectObservation], let result = results.first {
-                    newTrackedObjects[result.uuid] = result
-                    newPredictions.append(result)
-                }
-            }
-            
-            self.predictions = newPredictions
-            self.trackedObjects = newTrackedObjects
-            
-            DispatchQueue.main.async {
-                self.boxesView.predictedObjects = self.predictions
-                self.labelsTableView.reloadData()
-
-                self.👨‍🔧.🎬🤚()
-                self.isInferencing = false
-            }
-        } catch {
-            self.👨‍🔧.🎬🤚()
-            self.isInferencing = false
-        }
-    }
-}
-
-extension ViewController {
-    func predictUsingVision(pixelBuffer: CVPixelBuffer) {
+    func predictAndTrack(pixelBuffer: CVPixelBuffer) {
         guard let request = request else { fatalError() }
         // vision framework configures the input size of image following our model's input configuration automatically
         self.semaphore.wait()
@@ -196,14 +151,68 @@ extension ViewController {
     // MARK: - Post-processing
     func visionRequestDidComplete(request: VNRequest, error: Error?) {
         self.👨‍🔧.🏷(with: "endInference")
-        if let predictions = request.results as? [VNRecognizedObjectObservation] {
-            // print(predictions.first?.labels.first?.identifier ?? "nil")
-            // print(predictions.first?.labels.first?.confidence ?? -1)
-            
-            for prediction in predictions {
-                let observation = VNDetectedObjectObservation(boundingBox: prediction.boundingBox)
-                self.trackedObjects[observation.uuid] = observation
+
+        guard let predictions = request.results as? [VNRecognizedObjectObservation] else {
+            self.👨‍🔧.🎬🤚()
+            self.isInferencing = false
+            self.semaphore.signal()
+            return
+        }
+
+        // keep track of new predictions
+        var newTrackedObjects = [UUID: VNDetectedObjectObservation]()
+        var newPredictions = [VNRecognizedObjectObservation]()
+
+        for prediction in predictions {
+            var matched = false
+            for (uuid, trackedObject) in trackedObjects {
+                // check if prediction matches existing tracked object.
+                // TODO Let's change this to an IoU percentage
+                //      rather than just whether it intersects at all.
+                // In any case, this is very naive and worth replacing with a real
+                //      deeptracker or similar at such a time that it is worth it.
+                if trackedObject.boundingBox.intersects(prediction.boundingBox) {
+                    newTrackedObjects[uuid] = prediction
+                    matched = true
+                    break
+                }
             }
+
+            if !matched {
+                // add new prediction
+                // TODO Perform OCR at this step.
+                // TODO Ping cloud with OCR char results.
+                let observation = VNDetectedObjectObservation(boundingBox: prediction.boundingBox)
+                newTrackedObjects[observation.uuid] = observation
+            }
+            newPredictions.append(prediction)
+        }
+
+        // track new set of objects
+        trackObjects pixelBuffer: pixelBuffer, newTrackedObjects: newTrackedObjects, newPredictions: newPredictions
+    }
+
+    func trackObjects(pixelBuffer: CVPixelBuffer, newTrackedObjects: [UUID: VNDetectedObjectObservation], newPredictions: [VNRecognizedObjectObservation]) {
+        var trackingRequests = [VNRequest]()
+
+        for (_, observation) in newTrackedObjects {
+            let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: observation)
+            trackingRequests.append(trackingRequest)
+        }
+
+        do {
+            try sequenceRequestHandler.perform(trackingRequests, on: pixelBuffer)
+
+            var finalTrackedObjects = [UUID: VNDetectedObjectObservation]()
+
+            for request in trackingRequests {
+                if let results = request.results as? [VNDetectedObjectObservation], let result = results.first {
+                    finalTrackedObjects[result.uuid] = result
+                }
+            }
+
+            self.predictions = newPredictions
+            self.trackedObjects = finalTrackedObjects
 
             DispatchQueue.main.async {
                 self.boxesView.predictedObjects = predictions
@@ -214,13 +223,13 @@ extension ViewController {
                 
                 self.isInferencing = false
             }
-        } else {
-            // end of measure
+        } catch {
             self.👨‍🔧.🎬🤚()
-            
             self.isInferencing = false
         }
+
         self.semaphore.signal()
+
     }
 }
 
