@@ -38,6 +38,7 @@ class ViewController: UIViewController {
     // MARK: - Tracking Properties
     var trackedObjects = [UUID: VNDetectedObjectObservation]()
     var sequenceRequestHandler = VNSequenceRequestHandler()
+    var currentImageBeingProcessed: CVPixelBuffer?
 
     // MARK: - AV Property
     var videoCapture: VideoCapture!
@@ -46,6 +47,7 @@ class ViewController: UIViewController {
     
     // MARK: - TableView Data
     var predictions: [VNRecognizedObjectObservation] = []
+    var recognizedTexts = [UUID:String]()
     
     // MARK - Performance Measurement Property
     private let 👨‍🔧 = 📏()
@@ -140,10 +142,35 @@ extension ViewController: VideoCaptureDelegate {
 }
 
 extension ViewController {
+    func recognizeText(in image: CVPixelBuffer, for boundingBox: CGRect, completion: @escaping (String) -> Void) {
+        let textRecognitionRequest = VNRecognizeTextRequest { (request, error) in 
+            guard let observations = request.results as? [VNRecognizedTextObservation], error == nil else {
+                completion("no observation") // TODO change
+                return
+            }
+
+            // TODO grab multiple candidates to send as fuzzy search?
+            let recognizedStrings = observations.compactMap { $0.topCandidates(1).first?.string }
+        
+            completion (recognizedStrings.joined(separator: " "))
+        }
+
+        textRecognitionRequest.recognitionLevel = .accurate
+        textRecognitionRequest.usesLanguageCorrection = true // what does this do?
+
+        let handler = VNImageRequestHandler(cvPixelBuffer: image, options: [:])
+        do {
+            try handler.perform([textRecognitionRequest])
+        } catch {
+            completion("error request") // TODO change
+        }
+    }
+
     func predictAndTrack(pixelBuffer: CVPixelBuffer) {
         guard let request = request else { fatalError() }
         // vision framework configures the input size of image following our model's input configuration automatically
         self.semaphore.wait()
+        self.currentImageBeingProcessed = pixelBuffer
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer)
         try? handler.perform([request])
     }
@@ -187,13 +214,28 @@ extension ViewController {
             }
             newPredictions.append(prediction)
         }
-
-        // track new set of objects
-        trackObjects pixelBuffer: pixelBuffer, newTrackedObjects: newTrackedObjects, newPredictions: newPredictions
+        
+        // track new set of objects if image is available in this step
+        if let pixelBuffer = currentImageBeingProcessed {
+            trackObjects(pixelBuffer: pixelBuffer, newTrackedObjects: newTrackedObjects, newPredictions: newPredictions)
+            
+        }
     }
 
     func trackObjects(pixelBuffer: CVPixelBuffer, newTrackedObjects: [UUID: VNDetectedObjectObservation], newPredictions: [VNRecognizedObjectObservation]) {
         var trackingRequests = [VNRequest]()
+
+        // recognize text within each bbox
+        let dispatchGroup = DispatchGroup()
+
+        for prediction in newPredictions {
+            dispatchGroup.enter()
+            let uuid = UUID()
+            recognizeText(in: pixelBuffer, for: prediction.boundingBox) { text in
+                self.recognizedTexts[uuid] = text
+                dispatchGroup.leave()
+            }
+        }
 
         for (_, observation) in newTrackedObjects {
             let trackingRequest = VNTrackObjectRequest(detectedObjectObservation: observation)
@@ -215,7 +257,7 @@ extension ViewController {
             self.trackedObjects = finalTrackedObjects
 
             DispatchQueue.main.async {
-                self.boxesView.predictedObjects = predictions
+                self.boxesView.predictedObjects = self.predictions
                 self.labelsTableView.reloadData()
 
                 // end of measure
@@ -249,6 +291,13 @@ extension ViewController: UITableViewDataSource {
         
         cell.textLabel?.text = predictions[indexPath.row].label ?? "N/A"
         cell.detailTextLabel?.text = "\(rectString), \(confidenceString)"
+        
+        // display recognized text
+        let uuid = predictions[indexPath.row].uuid
+        if let recognizedText = recognizedTexts[uuid] {
+            cell.detailTextLabel?.text = "\(cell.detailTextLabel?.text ?? ""), \(recognizedText)"
+        }
+        
         return cell
     }
 }
