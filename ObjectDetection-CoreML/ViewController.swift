@@ -6,6 +6,7 @@
 //  Copyright © 2019 tucan9389. All rights reserved.
 //
 
+import CoreImage
 import UIKit
 import Vision
 import CoreMedia
@@ -37,12 +38,15 @@ class ViewController: UIViewController {
 
     // MARK: - AV Property
     var videoCapture: VideoCapture!
+    var currentImageBeingProcessed: CIImage?
     let semaphore = DispatchSemaphore(value: 1)
     var lastExecution = Date()
     
     // MARK: - TableView Data
-    var predictions: [VNRecognizedObjectObservation] = []
-    
+    var trackedObjects = [UUID:VNRecognizedObjectObservation]()
+    var objectUUIDs: [UUID] = []
+    var objectText = [UUID:String]()
+
     // MARK - Performance Measurement Property
     private let 👨‍🔧 = 📏()
     
@@ -141,8 +145,30 @@ extension ViewController {
         guard let request = request else { fatalError() }
         // vision framework configures the input size of image following our model's input configuration automatically
         self.semaphore.wait()
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer)
-        try? handler.perform([request])
+        self.currentImageBeingProcessed = CIImage(cvPixelBuffer:pixelBuffer)
+        let requestHandler = VNImageRequestHandler(ciImage:self.currentImageBeingProcessed!)
+        try? requestHandler.perform([request])
+    }
+    
+    func captureText(ciImage: CIImage) {
+        let requestHandler = VNImageRequestHandler(ciImage: ciImage)
+        let request = VNRecognizeTextRequest(completionHandler: recognizeTextHandler)
+        try? requestHandler.perform([request])
+    }
+    
+    func recognizeTextHandler(request: VNRequest, error: Error?) {
+        
+        // Unpack if able.
+        guard let observations = request.results as? [VNRecognizedTextObservation] else {
+            return
+        }
+        
+        
+    }
+        
+    func cropBoxFromPixelBuffer(rect:CGRect) -> CIImage? {
+        // Helper function to crop a CIImage with a CGRect.
+        return self.currentImageBeingProcessed!.cropped(to: rect)
     }
     
     // MARK: - Post-processing
@@ -152,11 +178,45 @@ extension ViewController {
             print(predictions.first?.labels.first?.identifier ?? "nil")
             print(predictions.first?.labels.first?.confidence ?? -1)
             
-            self.predictions = predictions
+            var newTrackedObjects = [UUID:VNRecognizedObjectObservation]()
+            var all_matched = false
+            var matched = false
+            
+            for prediction in predictions {
+                
+                matched = false
+                
+                // TODO Another way to track predictions; for now just intersection.
+                for (uuid, trackedObject) in self.trackedObjects {
+                    if trackedObject.boundingBox.intersects(prediction.boundingBox) {
+                        newTrackedObjects[uuid] = prediction
+                        matched = true
+                        break
+                    }
+                }
+                
+                if !matched {
+                    // Add new prediction.
+                    newTrackedObjects[prediction.uuid] = prediction
+                    
+                    // Mark image as requiring text inference.
+                    all_matched = false
+                }
+                
+            }
+            
+            if !all_matched {
+                // Launch OCR async.
+                captureText(ciImage: self.currentImageBeingProcessed!)
+            }
+            
+            self.trackedObjects = newTrackedObjects
+            self.objectUUIDs = Array(newTrackedObjects.keys)
+            
             DispatchQueue.main.async {
-                self.boxesView.predictedObjects = predictions
+                self.boxesView.predictedObjects = self.trackedObjects
                 self.labelsTableView.reloadData()
-
+                
                 // end of measure
                 self.👨‍🔧.🎬🤚()
                 
@@ -174,19 +234,21 @@ extension ViewController {
 
 extension ViewController: UITableViewDataSource {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return predictions.count
+        return trackedObjects.count
     }
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let cell = tableView.dequeueReusableCell(withIdentifier: "InfoCell") else {
             return UITableViewCell()
         }
+        
+        let uuid = self.objectUUIDs[indexPath.row]
 
-        let rectString = predictions[indexPath.row].boundingBox.toString(digit: 2)
-        let confidence = predictions[indexPath.row].labels.first?.confidence ?? -1
+        let rectString = self.trackedObjects[uuid]!.boundingBox.toString(digit: 2)
+        let confidence = self.trackedObjects[uuid]!.labels.first?.confidence ?? -1
         let confidenceString = String(format: "%.3f", confidence/*Math.sigmoid(confidence)*/)
         
-        cell.textLabel?.text = predictions[indexPath.row].label ?? "N/A"
+        cell.textLabel?.text = self.trackedObjects[uuid]!.label ?? "N/A"
         cell.detailTextLabel?.text = "\(rectString), \(confidenceString)"
         return cell
     }

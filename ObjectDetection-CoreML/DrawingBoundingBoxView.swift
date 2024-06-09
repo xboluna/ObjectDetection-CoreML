@@ -23,23 +23,24 @@ class DrawingBoundingBoxView: UIView {
         }
     }
     
-    public var predictedObjects: [VNRecognizedObjectObservation] = [] {
+    public var predictedObjects = [UUID:VNRecognizedObjectObservation]() {
         didSet {
             self.drawBoxs(with: predictedObjects)
             self.setNeedsDisplay()
         }
     }
     
-    func drawBoxs(with predictions: [VNRecognizedObjectObservation]) {
+    func drawBoxs(with predictions: [UUID:VNRecognizedObjectObservation]) {
         subviews.forEach({ $0.removeFromSuperview() })
         
-        for prediction in predictions {
-            createLabelAndBox(prediction: prediction)
+        for (uuid, prediction) in predictions {
+            createLabelAndBox(uuid:uuid, prediction: prediction)
         }
     }
     
-    func createLabelAndBox(prediction: VNRecognizedObjectObservation) {
-        let labelString: String? = prediction.label
+    func createLabelAndBox(uuid: UUID, prediction: VNRecognizedObjectObservation) {
+        
+        let labelString: String? = (prediction.label ?? "no label") + uuid.uuidString
         let color: UIColor = labelColor(with: labelString ?? "N/A")
         
         let scale = CGAffineTransform.identity.scaledBy(x: bounds.width, y: bounds.height)
